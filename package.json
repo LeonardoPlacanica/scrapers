@@ -1,0 +1,17 @@
+{
+  "name": "Scrapers",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "puppeteer": "^24.22.0"
+  },
+  "scripts": {
+    "start": "ts-node pagine_gialle.ts"
+  }
+}
