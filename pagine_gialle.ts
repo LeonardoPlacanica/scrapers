@@ -2,6 +2,74 @@ import puppeteer from 'puppeteer';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Array delle principali città italiane, una per ogni regione (capoluoghi di regione)
+export const principaliCittaItalia: string[] = [
+  "Roma",            // Lazio
+  "Milano",          // Lombardia
+  "Napoli",          // Campania
+  "Torino",          // Piemonte
+  "Palermo",         // Sicilia
+  "Genova",          // Liguria
+  "Bologna",         // Emilia-Romagna
+  "Firenze",         // Toscana
+  "Venezia",         // Veneto
+  "Bari",            // Puglia
+  "Cagliari",        // Sardegna
+  "Ancona",          // Marche
+  "L'Aquila",        // Abruzzo
+  "Potenza",         // Basilicata
+  "Catanzaro",       // Calabria
+  "Perugia",         // Umbria
+  "Trieste",         // Friuli Venezia Giulia
+  "Aosta",           // Valle d'Aosta
+  "Trento",          // Trentino-Alto Adige/Südtirol
+  "Campobasso"       // Molise
+];
+
+// Array di città secondarie italiane, almeno una per ogni regione (esempi rappresentativi)
+export const cittaSecondarieItalia: string[] = [
+  // Lombardia
+  "Bergamo", "Brescia", "Monza", "Como", "Pavia", "Varese", "Cremona", "Mantova", "Lecco", "Lodi", "Sondrio",
+  // Lazio
+  "Latina", "Frosinone", "Viterbo", "Rieti",
+  // Campania
+  "Salerno", "Caserta", "Avellino", "Benevento",
+  // Piemonte
+  "Novara", "Alessandria", "Asti", "Cuneo", "Biella", "Vercelli", "Verbano-Cusio-Ossola",
+  // Sicilia
+  "Catania", "Messina", "Siracusa", "Trapani", "Ragusa", "Agrigento", "Enna", "Caltanissetta",
+  // Liguria
+  "La Spezia", "Savona", "Imperia",
+  // Emilia-Romagna
+  "Modena", "Parma", "Reggio nell'Emilia", "Ravenna", "Ferrara", "Forlì", "Cesena", "Piacenza", "Rimini",
+  // Toscana
+  "Prato", "Livorno", "Pisa", "Arezzo", "Siena", "Grosseto", "Massa", "Carrara", "Lucca", "Pistoia",
+  // Veneto
+  "Verona", "Padova", "Vicenza", "Treviso", "Rovigo", "Belluno",
+  // Puglia
+  "Lecce", "Taranto", "Brindisi", "Foggia", "Barletta", "Andria", "Trani",
+  // Sardegna
+  "Sassari", "Nuoro", "Oristano", "Olbia", "Tempio Pausania", "Carbonia", "Iglesias",
+  // Marche
+  "Pesaro", "Urbino", "Macerata", "Ascoli Piceno", "Fermo",
+  // Abruzzo
+  "Pescara", "Chieti", "Teramo",
+  // Basilicata
+  "Matera",
+  // Calabria
+  "Reggio di Calabria", "Cosenza", "Crotone", "Vibo Valentia",
+  // Umbria
+  "Terni",
+  // Friuli Venezia Giulia
+  "Udine", "Pordenone", "Gorizia",
+  // Valle d'Aosta
+  // (Aosta è l'unica città principale)
+  // Trentino-Alto Adige/Südtirol
+  "Bolzano", "Merano", "Rovereto",
+  // Molise
+  "Isernia"
+];
+
 // Utility function to clean messy strings
 const cleanString = (str: string): string => {
   return str
@@ -90,49 +158,95 @@ const saveToCSV = (businesses: any[], filename: string, isAppend: boolean = fals
 }
 
 // Resume functionality
-const getLastScrapedCount = (url: string): number => {
+const getLastScrapedCount = (url: string, city: string): number => {
   const csvFile = `${url.split('/').pop()?.replace(/[^a-zA-Z0-9]/g, '_').replace('20', '').toLowerCase()}.csv`;
   if (!fs.existsSync(csvFile)) {
     return 0;
   }
 
   const content = fs.readFileSync(csvFile, 'utf-8');
-  const lines = content.split('\n').filter(line => line.trim());
+  const lines = content.split('\n').filter(line => line.trim()).filter(line => line.includes(city));
   return Math.max(0, lines.length - 1); // Subtract 1 for header
 }
 
-const getEstimatedStartPage = (scrapedCount: number): number => {
-  // Estimate starting page based on scraped count (assuming ~20 businesses per page)
-  return Math.floor(scrapedCount / 20) + 1;
+async function scrapePagineGialle(url: string) {
+  const allCities = [...principaliCittaItalia, ...cittaSecondarieItalia];
+
+  // Process cities in parallel batches of 5 to avoid overwhelming the server
+  const batchSize = 5;
+  for (let i = 0; i < allCities.length; i += batchSize) {
+    const cityBatch = allCities.slice(i, i + batchSize);
+    console.log(`\n=== Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(allCities.length / batchSize)} ===`);
+
+    // Process cities in parallel
+    await Promise.all(
+      cityBatch.map(city => scrapePagineGialleByCity(url, city))
+    );
+
+    // Small delay between batches to be respectful to the server
+    if (i + batchSize < allCities.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
 }
 
-async function scrapePagineGialle(url: string) {
+async function scrapePagineGialleByCity(url: string, city: string) {
   const browser = await puppeteer.launch({
-    headless: false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    headless: true, // Much faster in headless mode
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--disable-default-apps',
+      '--disable-extensions',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'
+    ]
   });
 
   try {
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'networkidle2' });
+
+    // Optimize page loading
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+    // Disable images and CSS for faster loading
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const resourceType = req.resourceType();
+      if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
+    await page.goto(`${url}/${city}`, { waitUntil: 'domcontentloaded' }); // Faster than networkidle2
 
     let allBusinesses: any[] = [];
-    let pageNumber = 1;
     let hasMoreResults = true;
-    const maxPages = 50; // Safety limit to prevent infinite loops
+    let offset = 0; // Track how many companies we've already scraped
 
     // Resume functionality
-    const lastScrapedCount = getLastScrapedCount(url);
+    const lastScrapedCount = getLastScrapedCount(url, city);
     const csvFile = `${url.split('/').pop()?.replace(/[^a-zA-Z0-9]/g, '_').replace('20', '').toLowerCase()}.csv`;
     let totalScraped = lastScrapedCount;
 
     if (lastScrapedCount > 0) {
-      const estimatedStartPage = getEstimatedStartPage(lastScrapedCount);
+      if (lastScrapedCount > 100) {
+        console.log('Last scraped count is greater than 200. Starting fresh scraping session.');
+        return;
+      }
       console.log(`Resuming from previous session: ${lastScrapedCount} businesses already scraped`);
-      console.log(`Estimated starting page: ${estimatedStartPage}`);
+      offset = lastScrapedCount; // Set offset to continue from where we left off
 
-      // Navigate to estimated page
-      for (let i = 1; i < estimatedStartPage; i++) {
+      // Load more results until we reach the offset
+      let currentOffset = 0;
+      while (currentOffset < offset) {
         const hasMoreButton = await page.evaluate(() => {
           const showMoreButton = document.querySelector('.next-page-btn');
           return showMoreButton !== null;
@@ -145,8 +259,13 @@ async function scrapePagineGialle(url: string) {
               showMoreButton.click();
             }
           });
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          pageNumber++;
+          //          await new Promise(resolve => setTimeout(resolve, 1000)); // Reduced from 3000ms
+
+          // Count current companies on page
+          const currentCount = await page.evaluate(() => {
+            return document.querySelectorAll('.search-itm.js-shiny-data-user').length;
+          });
+          currentOffset = currentCount;
         } else {
           break;
         }
@@ -155,10 +274,13 @@ async function scrapePagineGialle(url: string) {
       console.log('Starting fresh scraping session');
     }
 
-    while (hasMoreResults && pageNumber <= maxPages) {
-      console.log(`\n--- Scraping page ${pageNumber} ---`);
+    const MAX_NEW_BUSINESSES_RETRIES = 4;
+    let newBusinessesRetries = 0;
 
-      // Click all "Telefono" buttons to reveal phone numbers
+    while (hasMoreResults) {
+      console.log(`\n--- Scraping batch starting from offset ${offset} ---`);
+
+      // Click all "Telefono" buttons to reveal phone numbers (optimized)
       await page.evaluate(() => {
         const phoneButtons = document.querySelectorAll('a[data-pag="mostra telefono"]');
         phoneButtons.forEach(button => {
@@ -166,58 +288,48 @@ async function scrapePagineGialle(url: string) {
         });
       });
 
-      // Wait a bit for the phone numbers to load
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Minimal wait for phone numbers to load
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      const businesses = await page.evaluate(() => {
+      const businesses = await page.evaluate((startOffset) => {
         const listings = document.querySelectorAll('.search-itm.js-shiny-data-user');
+        const listingsToProcess = Array.from(listings).slice(startOffset);
 
-        return Array.from(listings).map(listing => {
-          // Extract business name
-          const nameElement = listing.querySelector('h2.search-itm__rag');
-          const name = nameElement ? nameElement.textContent?.trim() : '';
+        return listingsToProcess.map(listing => {
+          // Optimized extraction with single query per element
+          const getText = (selector: string) => {
+            const el = listing.querySelector(selector);
+            return el?.textContent?.trim() || '';
+          };
 
-          // Extract industry/category
-          const categoryElement = listing.querySelector('.search-itm__category');
-          const industry = categoryElement ? categoryElement.textContent?.trim() : '';
+          const getAttr = (selector: string, attr: string) => {
+            const el = listing.querySelector(selector);
+            return el?.getAttribute(attr) || '';
+          };
 
-          // Extract location/address
-          const addressElement = listing.querySelector('.search-itm__adr');
-          const location = addressElement ? addressElement.textContent?.trim() : '';
-
-          // Extract phone numbers (they're hidden initially, need to click to reveal)
-          const phoneContainer = listing.querySelector('.search-itm__phone');
+          // Extract phone numbers efficiently
           const phoneNumbers: string[] = [];
+          const phoneContainer = listing.querySelector('.search-itm__phone');
           if (phoneContainer) {
             const phoneElements = phoneContainer.querySelectorAll('li');
-            phoneElements.forEach(li => {
+            for (const li of phoneElements) {
               const phoneText = li.textContent?.trim();
-              if (phoneText) {
-                phoneNumbers.push(phoneText);
-              }
-            });
+              if (phoneText) phoneNumbers.push(phoneText);
+            }
           }
 
-          // Extract WhatsApp link
-          const whatsappElement = listing.querySelector('a[href*="wa.me"]');
-          const whatsappLink = whatsappElement ? whatsappElement.getAttribute('href') : '';
-
-          // Extract business URL
-          const businessLinkElement = listing.querySelector('a[href*="paginegialle.it"][title]');
-          const businessUrl = businessLinkElement ? businessLinkElement.getAttribute('href') : '';
-
           return {
-            name,
-            industry,
-            location,
+            name: getText('h2.search-itm__rag'),
+            industry: getText('.search-itm__category'),
+            location: getText('.search-itm__adr'),
             phoneNumbers,
-            whatsappLink: whatsappLink?.split('?')[0],
-            businessUrl
+            whatsappLink: getAttr('a[href*="wa.me"]', 'href')?.split('?')[0] || '',
+            businessUrl: getAttr('a[href*="paginegialle.it"][title]', 'href') || ''
           };
         });
-      });
+      }, offset);
 
-      // Clean the extracted data for this page
+      // Clean the extracted data for this batch
       const cleanedBusinesses = businesses.map(business => ({
         name: cleanString(business.name),
         industry: cleanString(business.industry),
@@ -227,11 +339,20 @@ async function scrapePagineGialle(url: string) {
         businessUrl: business.businessUrl
       }));
 
-      console.log(`Found ${cleanedBusinesses.length} businesses on page ${pageNumber}`);
+      console.log(`Found ${cleanedBusinesses.length} new businesses (offset: ${offset})`);
+      if (cleanedBusinesses.length === 0) {
+        newBusinessesRetries++;
+        if (newBusinessesRetries > MAX_NEW_BUSINESSES_RETRIES) {
+          console.log('No new businesses found. Stopping scraping.');
+          hasMoreResults = false;
+          break;
+        }
+      }
 
       // Add to our collection
       allBusinesses = allBusinesses.concat(cleanedBusinesses);
       totalScraped += cleanedBusinesses.length;
+      offset += cleanedBusinesses.length; // Update offset for next batch
 
       // Save to CSV every 20 businesses
       if (allBusinesses.length >= 20) {
@@ -258,26 +379,21 @@ async function scrapePagineGialle(url: string) {
           }
         });
 
-        // Wait for new content to load (rate limiting)
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Minimal wait for new content to load
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // Wait for new listings to appear
+        // Wait for new listings to appear with shorter timeout
         try {
-          await page.waitForSelector('.search-itm.js-shiny-data-user', { timeout: 10000 });
+          await page.waitForSelector('.search-itm.js-shiny-data-user', { timeout: 2000 });
+          hasMoreResults = totalScraped < 200;
         } catch (error) {
           console.log('No more results found or timeout waiting for new content');
           hasMoreResults = false;
         }
-
-        pageNumber++;
       } else {
         console.log('No more results button found. Scraping complete.');
         hasMoreResults = false;
       }
-    }
-
-    if (pageNumber > maxPages) {
-      console.log(`\nReached maximum page limit (${maxPages}). Stopping to prevent infinite loop.`);
     }
 
     // Save any remaining businesses to CSV
