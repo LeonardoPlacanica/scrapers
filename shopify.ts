@@ -92,7 +92,7 @@ class ShopifyProductVariantProcessor {
 
     for (let i = 1; i < this.csvData.length; i++) {
       const row = this.csvData[i];
-      const title = row[1]?.toLowerCase().trim(); // Column B (index 1) is Title
+      const title = row[1]?.trim(); // Column B (index 1) is Title
 
       if (!title) continue;
 
@@ -117,6 +117,24 @@ class ShopifyProductVariantProcessor {
   }
 
   /**
+   * Sort all rows by Handle column (index 0)
+   */
+  private sortRowsByHandle(): void {
+    // Sort all data rows (excluding header) by Handle column
+    const headerRow = this.csvData[0];
+    const dataRows = this.csvData.slice(1);
+
+    dataRows.sort((a, b) => {
+      const handleA = a[0] || ''; // Handle column (index 0)
+      const handleB = b[0] || '';
+      return handleA.localeCompare(handleB);
+    });
+
+    // Reconstruct the CSV data with sorted rows
+    this.csvData = [headerRow, ...dataRows];
+  }
+
+  /**
    * Clear columns B-I for variant rows (keep only first product row)
    */
   private clearVariantColumns(group: ProductGroup): void {
@@ -126,6 +144,7 @@ class ShopifyProductVariantProcessor {
     for (let i = 1; i < group.rows.length; i++) {
       const rowIndex = parseInt(group.rows[i]._rowIndex);
 
+      this.csvData[rowIndex][0] = this.csvData[0][0];
       columnsToClear.forEach(colIndex => {
         this.csvData[rowIndex][colIndex] = '';
       });
@@ -180,6 +199,51 @@ class ShopifyProductVariantProcessor {
   }
 
   /**
+   * Sort variants by image position and move them directly under the first product
+   */
+  private sortVariantsByImagePosition(group: ProductGroup): void {
+    const imagePosColIndex = 32; // Column AG (0-indexed: 32)
+    const handleColIndex = 0; // Column A (0-indexed: 0)
+
+    // Get all row indices for this group
+    const rowIndices = group.rows.map(row => parseInt(row._rowIndex));
+    const firstRowIndex = rowIndices[0];
+    const variantRowIndices = rowIndices.slice(1);
+
+    // Get the first product's handle
+    const firstProductHandle = this.csvData[firstRowIndex][handleColIndex];
+
+    // Sort variant rows by image position
+    variantRowIndices.sort((a, b) => {
+      const posA = parseInt(this.csvData[a][imagePosColIndex]) || 999;
+      const posB = parseInt(this.csvData[b][imagePosColIndex]) || 999;
+      return posA - posB;
+    });
+
+    // Update variant handles to match the first product
+    variantRowIndices.forEach(variantIndex => {
+      this.csvData[variantIndex][handleColIndex] = firstProductHandle;
+    });
+
+    // Move variant rows to be directly after the first product
+    // We need to physically move the rows in the CSV data
+    const firstProductRow = this.csvData[firstRowIndex];
+    const variantRows = variantRowIndices.map(index => this.csvData[index]);
+
+    // Remove the variant rows from their current positions
+    const sortedIndices = [...variantRowIndices].sort((a, b) => b - a); // Sort descending to remove from end first
+    sortedIndices.forEach(index => {
+      this.csvData.splice(index, 1);
+    });
+
+    // Find the new position of the first product after removals
+    const newFirstProductIndex = this.csvData.findIndex(row => row === firstProductRow);
+
+    // Insert variant rows directly after the first product
+    this.csvData.splice(newFirstProductIndex + 1, 0, ...variantRows);
+  }
+
+  /**
    * Process all product groups
    */
   public processProducts(): void {
@@ -187,6 +251,10 @@ class ShopifyProductVariantProcessor {
 
     // Read CSV
     this.readCSV();
+
+    // Sort all rows by Handle column first
+    this.sortRowsByHandle();
+    console.log('Sorted rows by Handle column');
 
     // Group products by title
     const productGroups = this.groupProductsByTitle();
@@ -201,6 +269,9 @@ class ShopifyProductVariantProcessor {
 
       // Fix image positions and copy image src
       this.fixImagePositions(group);
+
+      // Sort variants by image position and ensure all have same handle
+      this.sortVariantsByImagePosition(group);
     });
 
     // Write the processed CSV
