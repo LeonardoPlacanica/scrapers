@@ -12,6 +12,7 @@
     "puppeteer": "^24.22.0"
   },
   "scripts": {
-    "start": "ts-node pagine_gialle.ts"
+    "start": "ts-node pagine_gialle.ts",
+    "shopify": "ts-node shopify.ts"
   }
 }
